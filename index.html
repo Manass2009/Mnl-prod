@@ -3,31 +3,36 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Hologramme Stark AR Multi-Caméra</title>
+  <title>J.A.R.V.I.S. AR Prototype System</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { width: 100vw; height: 100vh; overflow: hidden; background: #000; font-family: sans-serif; }
+    body { width: 100vw; height: 100vh; overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
     #video { position: absolute; width: 100%; height: 100%; object-fit: cover; }
     .mirror { transform: scaleX(-1); }
     #canvas3d { position: absolute; width: 100%; height: 100%; top: 0; left: 0; z-index: 2; pointer-events: none; }
-    #hud {
-      position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
-      z-index: 3; color: #00f3ff; font-weight: bold; font-size: 12px;
-      text-transform: uppercase; letter-spacing: 1px; text-shadow: 0 0 8px #00f3ff;
-      background: rgba(0, 0, 0, 0.7); padding: 8px 16px; border-radius: 20px;
-      border: 1px solid #00f3ff; pointer-events: none; text-align: center; width: 85%; max-width: 340px;
+    
+    /* Interface Futuristic HUD */
+    #hud-panel {
+      position: absolute; top: 15px; left: 15px; z-index: 3;
+      color: #00f3ff; background: rgba(0, 15, 30, 0.75);
+      border: 1px solid #00f3ff; border-radius: 8px; padding: 12px;
+      width: 260px; backdrop-filter: blur(5px);
+      box-shadow: 0 0 15px rgba(0, 243, 255, 0.2); pointer-events: none;
     }
+    .hud-title { font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #ff0055; margin-bottom: 5px; }
+    .hud-value { font-size: 13px; color: #00f3ff; margin-bottom: 3px; }
+    .hud-status { font-size: 10px; color: #00ff88; }
+
     #controls {
-      position: absolute; bottom: 25px; left: 50%; transform: translateX(-50%);
-      z-index: 3; display: flex; gap: 10px; width: 90%; justify-content: center;
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      z-index: 3; display: flex; gap: 8px; width: 95%; max-width: 400px; justify-content: center;
     }
     .btn {
-      background: rgba(0, 0, 0, 0.7); color: #00f3ff; border: 1px solid #00f3ff;
-      padding: 12px 18px; border-radius: 12px; font-weight: bold; font-size: 12px;
+      background: rgba(0, 20, 40, 0.8); color: #00f3ff; border: 1px solid #00f3ff;
+      padding: 10px 14px; border-radius: 6px; font-weight: bold; font-size: 11px;
       text-transform: uppercase; cursor: pointer; backdrop-filter: blur(5px);
-      box-shadow: 0 0 10px rgba(0, 243, 255, 0.3);
     }
-    .btn:active { background: rgba(0, 243, 255, 0.4); }
+    .btn:active { background: #00f3ff; color: #000; }
   </style>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -36,216 +41,225 @@
 </head>
 <body>
 
-  <div id="hud">Initialisation de la caméra...</div>
-  
+  <div id="hud-panel">
+    <div class="hud-title">System J.A.R.V.I.S. v2.6</div>
+    <div id="hud-target" class="hud-value">Cible: ARMURE MARK-85</div>
+    <div id="hud-action" class="hud-value">Geste: En attente</div>
+    <div id="hud-diag" class="hud-status">IA Vocale: Dites "Affiche", "Détacher"</div>
+  </div>
+
   <div id="controls">
-    <button id="switchCamBtn" class="btn">📷 Caméra: Avant</button>
-    <button id="flashBtn" class="btn" style="display:none;">💡 Flash: OFF</button>
+    <button id="voiceBtn" class="btn">🎙️ Parler à l'IA</button>
+    <button id="switchCamBtn" class="btn">📷 Caméra</button>
+    <button id="explodeBtn" class="btn">💥 Séparer</button>
   </div>
 
   <video id="video" playsinline class="mirror"></video>
   <canvas id="canvas3d"></canvas>
 
   <script>
-    const hud = document.getElementById('hud');
+    const hudTarget = document.getElementById('hud-target');
+    const hudAction = document.getElementById('hud-action');
+    const hudDiag = document.getElementById('hud-diag');
     const videoElement = document.getElementById('video');
     const canvas3D = document.getElementById('canvas3d');
     const switchCamBtn = document.getElementById('switchCamBtn');
-    const flashBtn = document.getElementById('flashBtn');
+    const explodeBtn = document.getElementById('explodeBtn');
+    const voiceBtn = document.getElementById('voiceBtn');
 
     let currentStream = null;
-    let facingMode = 'user'; // 'user' = avant, 'environment' = arrière
-    let isTorchOn = false;
+    let facingMode = 'user';
+    let isExploded = false;
 
-    // --- 1. CONFIGURATION DE LA SCÈNE 3D (THREE.JS) ---
+    // --- 1. MOTEUR 3D HIGH-PERFORMANCE ---
     const scene = new THREE.Scene();
     const camera3D = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera3D.position.z = 5;
 
     const renderer = new THREE.WebGLRenderer({ canvas: canvas3D, alpha: true, antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    const mainHoloGroup = new THREE.Group();
-    scene.add(mainHoloGroup);
+    // DOSSARD / PROTO-ARMURE (Assemblage de modules 3D)
+    const armorGroup = new THREE.Group();
+    scene.add(armorGroup);
 
-    // --- HOLOGRAMME 1 : Caméra Avant (Sphère bleue et noyau rouge) ---
-    const frontHoloGroup = new THREE.Group();
-    const sphereGeo = new THREE.IcosahedronGeometry(1.2, 2);
-    const sphereMat = new THREE.MeshBasicMaterial({ color: 0x00f3ff, wireframe: true, transparent: true, opacity: 0.8 });
-    const holoCore = new THREE.Mesh(sphereGeo, sphereMat);
-    frontHoloGroup.add(holoCore);
+    // Module Central (Cœur ARC)
+    const coreGeo = new THREE.OctahedronGeometry(0.5, 2);
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0x00f3ff, wireframe: true });
+    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    armorGroup.add(coreMesh);
 
-    const innerGeo = new THREE.OctahedronGeometry(0.6, 0);
-    const innerMat = new THREE.MeshBasicMaterial({ color: 0xff0055, wireframe: true });
-    const innerCore = new THREE.Mesh(innerGeo, innerMat);
-    frontHoloGroup.add(innerCore);
+    // Plaques d'Armure Dégageables (4 Modules Extérieurs)
+    const plates = [];
+    const plateGeo = new THREE.BoxGeometry(0.4, 0.8, 0.1);
+    const plateMat = new THREE.MeshBasicMaterial({ color: 0xff0055, wireframe: true });
 
-    // --- HOLOGRAMME 2 : Caméra Arrière (Nœud Quantique Vert & Anneau Doré) ---
-    const rearHoloGroup = new THREE.Group();
-    const torusGeo = new THREE.TorusKnotGeometry(0.8, 0.2, 100, 16);
-    const torusMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true, transparent: true, opacity: 0.85 });
-    const torusMesh = new THREE.Mesh(torusGeo, torusMat);
-    rearHoloGroup.add(torusMesh);
+    const positions = [
+      { x: 1, y: 0, z: 0 }, { x: -1, y: 0, z: 0 },
+      { x: 0, y: 1, z: 0 }, { x: 0, y: -1, z: 0 }
+    ];
 
-    const ringGeo = new THREE.RingGeometry(1.3, 1.4, 32);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd700, wireframe: true, side: THREE.DoubleSide });
-    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-    rearHoloGroup.add(ringMesh);
+    positions.forEach((pos) => {
+      const plate = new THREE.Mesh(plateGeo, plateMat);
+      plate.userData = { origX: pos.x, origY: pos.y, origZ: pos.z };
+      plate.position.set(pos.x, pos.y, pos.z);
+      armorGroup.add(plate);
+      plates.push(plate);
+    });
 
-    // Démarrer avec l'hologramme avant
-    mainHoloGroup.add(frontHoloGroup);
+    // Variables pour lissage ultra-fluide (LERP Math)
+    let targetX = 0, targetY = 0, targetScale = 1;
+    let currentX = 0, currentY = 0, currentScale = 1;
 
-    // --- 2. LOGIQUE DU SUIVI DE LA MAIN ET DES GESTES ---
-    let isPinching = false;
-
-    function updateHologram(handLandmarks) {
+    // --- 2. TRAITEMENT DU SUIVI DES MAINS (OPTIMISÉ) ---
+    function updateHandTracking(handLandmarks) {
       const indexTip = handLandmarks[8];
       const thumbTip = handLandmarks[4];
 
-      // Inverser la direction X si on est en caméra miroir (avant)
       const dirX = (facingMode === 'user') ? -1 : 1;
-      const targetX = dirX * (indexTip.x - 0.5) * 6;
-      const targetY = - (indexTip.y - 0.5) * 6;
+      targetX = dirX * (indexTip.x - 0.5) * 6;
+      targetY = - (indexTip.y - 0.5) * 6;
 
       const dx = indexTip.x - thumbTip.x;
       const dy = indexTip.y - thumbTip.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
+      const distance = Math.hypot(dx, dy);
 
-      // Action quand on pince les doigts (< 0.08)
+      // Détection Pince (Pinch)
       if (distance < 0.08) {
-        if (!isPinching) {
-          isPinching = true;
-          sphereMat.color.setHex(0xffaa00);
-          torusMat.color.setHex(0xffaa00);
-          hud.innerText = "Hologramme Saisi !";
-        }
-        mainHoloGroup.position.x = targetX;
-        mainHoloGroup.position.y = targetY;
+        hudAction.innerText = "Geste: Saisie & Manipulation";
+        targetScale = 1.4;
+        coreMat.color.setHex(0xffaa00);
       } else {
-        isPinching = false;
-        sphereMat.color.setHex(0x00f3ff);
-        torusMat.color.setHex(0x00ff88);
-        hud.innerText = "Pince l'index et le pouce pour attraper";
+        hudAction.innerText = "Geste: Suivi Actif";
+        targetScale = Math.max(0.6, Math.min(distance * 4, 2.2));
+        coreMat.color.setHex(0x00f3ff);
       }
-
-      // Taille dépendante de l'écartement des doigts
-      const scale = Math.max(0.5, Math.min(distance * 5, 2.5));
-      mainHoloGroup.scale.set(scale, scale, scale);
     }
 
-    // --- 3. DÉTECTION INTELLIGENCE ARTIFICIELLE (MEDIAPIPE) ---
+    // --- 3. MEDIAPIPE LITE (SPEED CONFIGURATION) ---
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
     hands.setOptions({
       maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.6
+      modelComplexity: 0, // 0 = LITE (Ultra-rapide sur mobile)
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
     });
 
     hands.onResults((results) => {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        updateHologram(results.multiHandLandmarks[0]);
+        updateHandTracking(results.multiHandLandmarks[0]);
       } else {
-        hud.innerText = "Place ta main devant la caméra";
+        hudAction.innerText = "Geste: Recherche main...";
       }
     });
 
-    // --- 4. GESTION DES CAMÉRAS ET DU FLASH ---
-    async function startCamera() {
-      if (currentStream) {
-        currentStream.getTracks().forEach(track => track.stop());
-      }
+    // --- 4. FLUIDITÉ TONY STARK (BOUCLE DE LISSAGE PHYSIC) ---
+    function animate() {
+      requestAnimationFrame(animate);
 
-      const constraints = {
-        video: {
-          facingMode: facingMode,
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
+      // Interpolation linéaire (LERP) pour éliminer les tremblements
+      currentX += (targetX - currentX) * 0.15;
+      currentY += (targetY - currentY) * 0.15;
+      currentScale += (targetScale - currentScale) * 0.15;
+
+      armorGroup.position.x = currentX;
+      armorGroup.position.y = currentY;
+      armorGroup.scale.set(currentScale, currentScale, currentScale);
+
+      // Animations continues des sous-composants
+      coreMesh.rotation.y += 0.02;
+      coreMesh.rotation.z += 0.01;
+
+      // Gestion de la séparation des pièces (Exploded View)
+      plates.forEach((plate) => {
+        const factor = isExploded ? 2.2 : 1.0;
+        plate.position.x += (plate.userData.origX * factor - plate.position.x) * 0.1;
+        plate.position.y += (plate.userData.origY * factor - plate.position.y) * 0.1;
+        plate.rotation.y += 0.02;
+      });
+
+      renderer.render(scene, camera3D);
+    }
+
+    // --- 5. MODULE DE RECONNAISSANCE VOCALE (IA INTEGRATION) ---
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'fr-FR';
+      recognition.continuous = false;
+
+      voiceBtn.addEventListener('click', () => {
+        hudDiag.innerText = "IA: Écoute en cours...";
+        recognition.start();
+      });
+
+      recognition.onresult = (event) => {
+        const cmd = event.results[0][0].transcript.toLowerCase();
+        hudDiag.innerText = `Commande: "${cmd}"`;
+
+        if (cmd.includes("détacher") || cmd.includes("séparer")) {
+          toggleExplode(true);
+        } else if (cmd.includes("assembler") || cmd.includes("coller")) {
+          toggleExplode(false);
+        } else if (cmd.includes("analyse") || cmd.includes("calcul")) {
+          hudDiag.innerText = "Probabilité impression 3D: 94.2% [Valide]";
+        } else if (cmd.includes("affiche") || cmd.includes("armure")) {
+          hudTarget.innerText = "Cible: PROTO-ARMURE MARK-85";
+          armorGroup.visible = true;
         }
       };
+    } else {
+      voiceBtn.innerText = "Vocale non supportée";
+    }
 
+    function toggleExplode(state) {
+      isExploded = (state !== undefined) ? state : !isExploded;
+      explodeBtn.innerText = isExploded ? "🔗 Assembler" : "💥 Séparer";
+      hudDiag.innerText = isExploded ? "Structure: Vue Éclatée" : "Structure: Compacte";
+    }
+
+    explodeBtn.addEventListener('click', () => toggleExplode());
+
+    // --- 6. CAMÉRA & INITIALISATION ---
+    async function startCamera() {
+      if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+      
       try {
-        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+        currentStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
         videoElement.srcObject = currentStream;
         await videoElement.play();
 
-        // Gestion de l'affichage et changement d'hologramme
         if (facingMode === 'user') {
           videoElement.classList.add('mirror');
-          switchCamBtn.innerText = "📷 Caméra: Avant";
-          flashBtn.style.display = 'none';
-          mainHoloGroup.clear();
-          mainHoloGroup.add(frontHoloGroup);
+          switchCamBtn.innerText = "📷 Cam: Avant";
         } else {
           videoElement.classList.remove('mirror');
-          switchCamBtn.innerText = "📷 Caméra: Arrière";
-          flashBtn.style.display = 'inline-block';
-          mainHoloGroup.clear();
-          mainHoloGroup.add(rearHoloGroup);
+          switchCamBtn.innerText = "📷 Cam: Arrière";
         }
-
-        isTorchOn = false;
-        flashBtn.innerText = "💡 Flash: OFF";
-        processVideoFrame();
-      } catch (err) {
-        console.error(err);
-        hud.innerText = "Erreur : Impossible d'accéder à la caméra";
+        processFrame();
+      } catch (e) {
+        hudDiag.innerText = "Erreur accès caméra";
       }
     }
 
-    async function processVideoFrame() {
+    async function processFrame() {
       if (videoElement.currentTime > 0 && !videoElement.paused && !videoElement.ended) {
         await hands.send({ image: videoElement });
       }
-      requestAnimationFrame(processVideoFrame);
+      requestAnimationFrame(processFrame);
     }
 
-    // Changement de caméra
     switchCamBtn.addEventListener('click', () => {
       facingMode = (facingMode === 'user') ? 'environment' : 'user';
       startCamera();
     });
 
-    // Activation du Flash (Lampe Torche)
-    flashBtn.addEventListener('click', async () => {
-      if (!currentStream) return;
-      const track = currentStream.getVideoTracks()[0];
-      try {
-        const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-        if (capabilities.torch) {
-          isTorchOn = !isTorchOn;
-          await track.applyConstraints({ advanced: [{ torch: isTorchOn }] });
-          flashBtn.innerText = isTorchOn ? "💡 Flash: ON" : "💡 Flash: OFF";
-        } else {
-          alert("Le flash n'est pas géré par le navigateur de ce téléphone.");
-        }
-      } catch (e) {
-        alert("Impossible d'activer le flash.");
-      }
-    });
-
-    // --- 5. ANIMATION CONTINUELLE ---
-    function animate() {
-      requestAnimationFrame(animate);
-
-      // Animation Caméra Avant
-      holoCore.rotation.y += 0.01;
-      holoCore.rotation.x += 0.005;
-      innerCore.rotation.y -= 0.03;
-
-      // Animation Caméra Arrière
-      torusMesh.rotation.y += 0.02;
-      torusMesh.rotation.x += 0.01;
-      ringMesh.rotation.z += 0.015;
-
-      renderer.render(scene, camera3D);
-    }
-
-    // Lancement
     startCamera();
     animate();
 
